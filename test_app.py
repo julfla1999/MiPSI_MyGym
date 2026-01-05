@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime
-from mygym_skeleton import (
+from models import (
     ReservationService,
     Session,
     Reservation,
