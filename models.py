@@ -26,23 +26,29 @@ class User:
     last_name: str
     email: str
     password_hash: str
+    role: str
+
+    def update(self, db, **changes):
+        return db.update_user(self.user_id, **changes)
 
 
 @dataclass
 class Client(User):
-    reservations: List[Reservation] = field(default_factory=list)
+    def get_reservations(self, db):
+        rows = db.get_client_reservations_with_details(self.user_id)
+        return rows
 
     # Przypadek użycia - przegląd harmonogramu
     def view_schedule(self, schedule: "Schedule") -> List["Session"]:
         return schedule.get_sessions()
 
     # Przypadek użycia - zapis na zajęcia/trening
-    def create_reservation(self, session: "Session", reservation_service: "ReservationService") -> "Reservation":
-        return reservation_service.create_reservation(client=self, session=session)
+    def create_reservation(self, session, reservation_service):
+        return reservation_service.create_reservation(self, session)
 
     # Przypadek użycia - anulowanie rezerwacji
-    def cancel_reservation(self, reservation: "Reservation", reservation_service: "ReservationService") -> None:
-        reservation_service.cancel_reservation(reservation)
+    def cancel_reservation(self, reservation_id, reservation_service):
+        return reservation_service.cancel_reservation(reservation_id)
 
 
 @dataclass
@@ -87,6 +93,28 @@ class UserService:
 
         return True, 'Konto utworzone'
 
+    def login(self, email, password):
+        existing = self.db.get_user(email)
+
+        if not existing:
+            return False, 'Błędny email lub hasło'
+
+        user_id, first, last, email, stored_hash, role = existing
+
+        if stored_hash != hash_password(password):
+            return False, 'Błędny email lub hasło'
+
+        if role == 'client':
+            user = Client(user_id, first, last, email, stored_hash, role)
+        elif role == 'trainer':
+            user = Trainer(user_id, first, last, email, stored_hash, role)
+        elif role == 'manager':
+            user = Manager(user_id, first, last, email, stored_hash, role)
+        else:
+            return False, 'Nieznana rola użytkownika'
+
+        return True, user
+
 
 @dataclass
 class GymBranch:
@@ -99,53 +127,29 @@ class GymBranch:
 @dataclass
 class Schedule:
     schedule_id: int
-    sessions: List["Session"] = field(default_factory=list)
-
-    # Dodanie sesji do harmonogramu
-    def add_session(self, session: "Session") -> None:
-        self.sessions.append(session)
-
-    # Usunięcie sesji z harmonogramu
-    def remove_session(self, session_id: int) -> None:
-        self.sessions = [s for s in self.sessions if s.session_id != session_id]
-
-    # Zwrócenie listy sesji
-    def get_sessions(self) -> List["Session"]:
-        """Zwrócenie listy sesji"""
-        return list(self.sessions)
 
 
 @dataclass
 class Session:
     session_id: int
+    type: str
+    trainer_id: int
     start_time: datetime
     duration_min: int
     capacity: int
-    status: SessionStatus = SessionStatus.ACTIVE
-
-    trainer: Optional[Trainer] = None
-    reservations: List["Reservation"] = field(default_factory=list)
-
-    # Liczba aktywnych rezerwacji
-    def get_available_slots(self) -> int:
-        active_count = sum(1 for r in self.reservations if r.status == ReservationStatus.ACTIVE)
-        return max(0, self.capacity - active_count)
-
-    # Powiązanie sesja -> rezerwacja
-    def attach_reservation(self, reservation: "Reservation") -> None:
-        self.reservations.append(reservation)
+    status: str
 
 
 @dataclass
 class ClassSession(Session):
-    name: str = ""
-    description: str = ""
-    difficulty_level: str = ""
+    name: str
+    description: str
+    difficulty_level: str
 
 
 @dataclass
 class PTSession(Session):
-    price: float = 0.0
+    price: float
 
 
 @dataclass
@@ -154,70 +158,57 @@ class Reservation:
     created_at: datetime
     status: ReservationStatus = ReservationStatus.ACTIVE
 
-    client: Optional[Client] = None
-    session: Optional[Session] = None
-
-    # Powiązanie rezerwacja -> klient i rezerwacja -> sesja
-    def link(self, client: Client, session: Session) -> None:
-        self.client = client
-        self.session = session
-
 
 # Warstwa logiki
 class ScheduleService:
-    # Przypadek użycia - dodanie zajęć manager
-    def add_session(self, schedule: Schedule, session: Session) -> None:
+    def __init__(self, db):
+        self.db = db
 
-        # TODO: walidacja / konflikty w terminach
-        schedule.add_session(session)
+    def get_available_slots(self, session_id):
+        session = self.db.get_session_by_id(session_id)
+        reserved = self.db.count_active_reservations(session_id)
+        return session['capacity'] - reserved
 
-    # Przypadek użycia - edycja zajęć
-    def edit_session(self, schedule: Schedule, session_id: int, **changes) -> None:
+    def get_all_sessions(self):
+        return self.db.get_all_sessions()
 
-        # TODO: odnaleźć sesję i zastosować zmiany
-        for s in schedule.sessions:
-            if s.session_id == session_id:
-                for k, v in changes.items():
-                    if hasattr(s, k):
-                        setattr(s, k, v)
-                return
+    def get_sessions_by_type(self, type_):
+        return self.db.get_sessions_by_type(type_)
 
-    # Przypadek użycia - usuwanie zajęć
-    def remove_session(self, schedule: Schedule, session_id: int) -> None:
+    def add_session(self, **data):
+        return self.db.add_session(**data)
 
-        schedule.remove_session(session_id)
+    def edit_session(self, session_id, **changes):
+        return self.db.update_session(session_id, **changes)
 
-    # Sprawdzanie konfliktów terminu trenera
-    def check_conflicts(self, schedule: Schedule, trainer: Trainer, start_time: datetime, duration_min: int) -> bool:
+    def remove_session(self, session_id):
+        return self.db.cancel_session(session_id)
 
-        # TODO: implementacja dokładnego sprawdzania kolizji
-        return False
+    def get_session(self, session_id):
+        return self.db.get_session_by_id(session_id)
 
 
 class ReservationService:
-    # Przypadek użycia - zapis na zajęcia / rezerwacja treningu
-    def create_reservation(self, client: Client, session: Session) -> Reservation:
-        # Blokowanie zapisu przy braku dostępnych miejsc
-        if session.get_available_slots() <= 0:
-            raise ValueError("Brak dostępnych miejsc")
+    def __init__(self, db):
+        self.db = db
 
-        reservation = Reservation(
-            reservation_id=self._generate_reservation_id(),
-            created_at=datetime.now(),
-            status=ReservationStatus.ACTIVE,
-        )
+    def create_reservation(self, client, session):
+        active_count = self.db.count_active_reservations(session.session_id)
+        if active_count >= session.capacity:
+            return False, 'Brak dostępnych miejsc'
 
-        # Implementacja powiązań między klasami
-        reservation.link(client=client, session=session)
-        client.reservations.append(reservation)
-        session.attach_reservation(reservation)
+        if self.db.client_has_reservation(client.user_id, session.session_id):
+            return False, 'Masz już rezerwację na te zajęcia'
 
-        return reservation
+        created_at = datetime.now().isoformat()
+        reservation_id = self.db.add_reservation(client_id=client.user_id, session_id=session.session_id,
+                                                 created_at=created_at, status='ACTIVE')
 
-    # Przypadek użycia - anulowanie rezerwacji
-    def cancel_reservation(self, reservation: Reservation) -> None:
-        reservation.status = ReservationStatus.CANCELLED
+        reservation = Reservation(reservation_id=reservation_id, created_at=datetime.fromisoformat(created_at),
+                                  status=ReservationStatus.ACTIVE)
 
-    # Generator ID rezerwacji
-    def _generate_reservation_id(self) -> int:
-        return int(datetime.now().timestamp())
+        return True, reservation
+
+    def cancel_reservation(self, reservation_id):
+        self.db.cancel_reservation(reservation_id)
+        return True
