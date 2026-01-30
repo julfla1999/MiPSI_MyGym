@@ -1,8 +1,12 @@
 import sqlite3
 
 
+
 class Database:
     def __init__(self, db_path='mygym.db'):
+        self.conn = sqlite3.connect('mygym.db')
+        self.cursor = self.conn.cursor()
+        self.db = None
         self.db_path = db_path
 
     def connect(self):
@@ -83,6 +87,15 @@ class Database:
             cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
             return cursor.fetchone()
 
+    def get_user_by_id(self, user_id):
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM users WHERE id = ?',
+                (user_id,)
+            )
+            return cursor.fetchone()
+
     def add_session(self, session_type, name, description, difficulty_level,
                     price, trainer_id, start_time, duration_min, capacity, status='ACTIVE'):
         with self.connect() as conn:
@@ -103,6 +116,16 @@ class Database:
             cursor.execute('SELECT * FROM sessions WHERE status = "ACTIVE"')
             return cursor.fetchall()
 
+    def session_exists(self, name, start_time):
+
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM sessions WHERE name = ? AND start_time = ?",
+                (name, start_time)
+            )
+            return cursor.fetchone() is not None
+
     def get_sessions_by_type(self, session_type):
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -120,6 +143,14 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM sessions WHERE trainer_id = ? AND status = "ACTIVE"', (trainer_id,))
             return cursor.fetchall()
+
+    def get_users_by_role(self, role):
+        self.cursor.execute(
+            'SELECT id, first_name, last_name FROM users WHERE role = ?',
+            (role,)
+        )
+        return self.cursor.fetchall()
+
 
     def update_session(self, session_id, **changes):
         if not changes:
@@ -148,11 +179,22 @@ class Database:
             conn.commit()
             return cursor.lastrowid
 
+
     def get_reservations_for_client(self, client_id):
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM reservations WHERE client_id = ? ORDER BY created_at DESC', (client_id,))
             return cursor.fetchall()
+
+    def get_client_reservation(self, client_id, session_id):
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, client_id, session_id, status
+                FROM reservations
+                WHERE client_id = ? AND session_id = ? AND status = 'ACTIVE'
+            """, (client_id, session_id))
+            return cursor.fetchone()
 
     def get_client_reservations_with_details(self, client_id):
         with self.connect() as conn:
@@ -185,6 +227,15 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM reservations WHERE id = ?', (reservation_id,))
             return cursor.fetchone()
+
+    def update_reservation_status(self, reservation_id, status):
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE reservations SET status = ? WHERE id = ?',
+                (status, reservation_id)
+            )
+            conn.commit()
 
     def cancel_reservation(self, reservation_id):
         with self.connect() as conn:

@@ -2,6 +2,7 @@ from db import Database
 from utils import hash_password
 
 
+
 def seed_users():
     db = Database()
     db.create_tables()

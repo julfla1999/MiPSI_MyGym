@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from enum import Enum
 from typing import List, Optional
 
@@ -160,32 +160,74 @@ class Reservation:
 
 
 # Warstwa logiki
+
 class ScheduleService:
     def __init__(self, db):
         self.db = db
 
-    def get_available_slots(self, session_id):
-        session = self.db.get_session_by_id(session_id)
+    def get_available_slots(self, session_id: int) -> int:
+        row = self.db.get_session_by_id(session_id)
+        if not row:
+            return 0
+
+        capacity = row[9]  # capacity z tabeli sessions
         reserved = self.db.count_active_reservations(session_id)
-        return session['capacity'] - reserved
 
-    def get_all_sessions(self):
-        return self.db.get_all_sessions()
+        return max(0, capacity - reserved)
 
-    def get_sessions_by_type(self, type_):
-        return self.db.get_sessions_by_type(type_)
 
-    def add_session(self, **data):
-        return self.db.add_session(**data)
+    def get_sessions_for_date(self, target_date: date):
+        rows = self.db.get_all_sessions()
+        sessions = []
 
-    def edit_session(self, session_id, **changes):
-        return self.db.update_session(session_id, **changes)
+        for r in rows:
+            (
+                session_id,
+                type_,
+                name,
+                description,
+                difficulty,
+                price,
+                trainer_id,
+                start_time,
+                duration,
+                capacity,
+                status
+            ) = r
 
-    def remove_session(self, session_id):
-        return self.db.cancel_session(session_id)
+            dt = datetime.fromisoformat(start_time)
+            if dt.date() != target_date:
+                continue
 
-    def get_session(self, session_id):
-        return self.db.get_session_by_id(session_id)
+            sessions.append({
+                'session_id': session_id,
+                'type': type_,
+                'name': name or 'Zajęcia',
+                'trainer_id': trainer_id,
+                'start_time': start_time,
+                'hour': dt.hour,
+                'capacity': capacity
+            })
+
+        return sessions
+
+    def get_week_sessions(self, monday: date):
+        week = {day: {} for day in range(7)}
+
+        for i in range(7):
+            day_date = monday + timedelta(days=i)
+            sessions = self.get_sessions_for_date(day_date)
+
+            for s in sessions:
+                dt = datetime.fromisoformat(s['start_time'])
+                hour = dt.hour
+
+                week[i].setdefault(hour, []).append(s)
+
+        return week
+
+
+
 
 
 class ReservationService:
@@ -193,22 +235,33 @@ class ReservationService:
         self.db = db
 
     def create_reservation(self, client, session):
-        active_count = self.db.count_active_reservations(session.session_id)
-        if active_count >= session.capacity:
-            return False, 'Brak dostępnych miejsc'
+        session_id = session['session_id']
 
-        if self.db.client_has_reservation(client.user_id, session.session_id):
+        if self.db.client_has_reservation(client.user_id, session_id):
             return False, 'Masz już rezerwację na te zajęcia'
 
+        if self.db.count_active_reservations(session_id) >= session['capacity']:
+            return False, 'Brak wolnych miejsc'
+
         created_at = datetime.now().isoformat()
-        reservation_id = self.db.add_reservation(client_id=client.user_id, session_id=session.session_id,
-                                                 created_at=created_at, status='ACTIVE')
+        self.db.add_reservation(
+            client_id=client.user_id,
+            session_id=session_id,
+            created_at=created_at,
+            status='ACTIVE'
+        )
 
-        reservation = Reservation(reservation_id=reservation_id, created_at=datetime.fromisoformat(created_at),
-                                  status=ReservationStatus.ACTIVE)
+        return True, 'Zapisano na zajęcia'
 
-        return True, reservation
+    def is_user_registered(self, user, session_id):
+        return self.db.client_has_reservation(user.user_id, session_id)
 
-    def cancel_reservation(self, reservation_id):
-        self.db.cancel_reservation(reservation_id)
-        return True
+
+    def cancel_reservation(self, client, session):
+        res = self.db.get_client_reservation(client.user_id, session['session_id'])
+        if not res:
+            return False, 'Nie masz rezerwacji na te zajęcia'
+
+        reservation_id = res[0]
+        self.db.update_reservation_status(reservation_id, 'CANCELLED')
+        return True, 'Rezerwacja anulowana'

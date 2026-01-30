@@ -1,8 +1,10 @@
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
+from datetime import datetime, date, timedelta
+
 from db import Database
-from models import UserService
+from models import UserService, ReservationService, ScheduleService
 
 
 class App(ttk.Window):
@@ -10,6 +12,7 @@ class App(ttk.Window):
         super().__init__(themename='pulse')
         self.title('MyGym')
         self.resizable(False, False)
+
         self.container = ttk.Frame(self)
         self.container.pack(fill='both', expand=True, padx=30, pady=30)
 
@@ -30,10 +33,10 @@ class App(ttk.Window):
     def show_frame(self, frame_class):
         frame = self.frames[frame_class]
         frame.tkraise()
-        if hasattr(frame, 'update_user_info'):
-            frame.update_user_info()
-        if hasattr(frame, 'on_show'): 
+        if hasattr(frame, 'on_show'):
             frame.on_show()
+
+
 
 
 class AuthBaseFrame(ttk.Frame):
@@ -43,8 +46,7 @@ class AuthBaseFrame(ttk.Frame):
         self.user_service = user_service
 
         self.logo_img = ttk.PhotoImage(file='assets/mg_logo.png')
-        self.logo = ttk.Label(self, image=self.logo_img)
-        self.logo.pack(pady=10)
+        ttk.Label(self, image=self.logo_img).pack(pady=10)
 
         self.message_label = None
 
@@ -62,104 +64,94 @@ class LoginForm(AuthBaseFrame):
 
         ttk.Label(self, text='Zaloguj się', font=('Helvetica', 14, 'bold')).pack(pady=15)
 
-        ttk.Label(self, text='Email', justify='left').pack(fill='x')
+        ttk.Label(self, text='Email').pack(fill='x')
         self.email_entry = ttk.Entry(self)
         self.email_entry.pack(fill='x', pady=5)
 
-        ttk.Label(self, text='Hasło', justify='left').pack(fill='x')
-        self.password_entry = ttk.Entry(self)
-        self.password_entry.config(show='*')
+        ttk.Label(self, text='Hasło').pack(fill='x')
+        self.password_entry = ttk.Entry(self, show='*')
         self.password_entry.pack(fill='x', pady=5)
 
         ttk.Button(self, text='Zaloguj się', command=self.handle_login).pack(fill='x', pady=5)
-        ttk.Button(self, text='Nie masz konta? Zarejestruj się', bootstyle=SECONDARY,
-                   command=self.go_to_register).pack(fill='x', pady=5)
+        ttk.Button(self, text='Nie masz konta? Zarejestruj się',
+                   bootstyle=SECONDARY,
+                   command=lambda: controller.show_frame(RegisterForm)).pack(fill='x', pady=5)
 
-        self.message_label = ttk.Label(self, text='')
+        self.message_label = ttk.Label(self)
         self.message_label.pack(pady=5)
 
     def handle_login(self):
         email = self.email_entry.get().strip().lower()
         password = self.password_entry.get().strip()
-        user_data = [email, password]
-        if not all(user_data):
+
+        if not email or not password:
             self.message_label.config(text='Wypełnij wszystkie pola', foreground='red')
             return
 
-        success, result = self.user_service.login(*user_data)
-
-        if not success:
+        ok, result = self.user_service.login(email, password)
+        if not ok:
             self.message_label.config(text=result, foreground='red')
             return
 
-        user = result
-        self.controller.current_user = user
-
-        self.message_label.config(text='', foreground='black')
+        self.controller.current_user = result
         self.clear_form()
 
-        if user.role == 'client':
+        if result.role == 'client':
             self.controller.show_frame(ClientHome)
-        elif user.role == 'trainer':
+        elif result.role == 'trainer':
             self.controller.show_frame(TrainerHome)
-        elif user.role == 'manager':
+        else:
             self.controller.show_frame(ManagerHome)
-
-    def go_to_register(self):
-        self.clear_form()
-        self.controller.show_frame(RegisterForm)
 
 
 class RegisterForm(AuthBaseFrame):
     def __init__(self, parent, controller, user_service):
         super().__init__(parent, controller, user_service)
-        self.user_service = user_service
 
         ttk.Label(self, text='Zarejestruj się', font=('Helvetica', 14, 'bold')).pack(pady=15)
 
-        ttk.Label(self, text='Imię', justify='left').pack(fill='x')
         self.first_name_entry = ttk.Entry(self)
-        self.first_name_entry.pack(fill='x', pady=5)
-
-        ttk.Label(self, text='Nazwisko', justify='left').pack(fill='x')
         self.last_name_entry = ttk.Entry(self)
-        self.last_name_entry.pack(fill='x', pady=5)
-
-        ttk.Label(self, text='Email', justify='left').pack(fill='x')
         self.email_entry = ttk.Entry(self)
-        self.email_entry.pack(fill='x', pady=5)
+        self.password_entry = ttk.Entry(self, show='*')
 
-        ttk.Label(self, text='Hasło', justify='left').pack(fill='x')
-        self.password_entry = ttk.Entry(self)
-        self.password_entry.pack(fill='x', pady=5)
-        self.password_entry.config(show='*')
+        for label, entry in [
+            ('Imię', self.first_name_entry),
+            ('Nazwisko', self.last_name_entry),
+            ('Email', self.email_entry),
+            ('Hasło', self.password_entry)
+        ]:
+            ttk.Label(self, text=label).pack(fill='x')
+            entry.pack(fill='x', pady=5)
 
-        ttk.Button(self, text='Zarejestruj się', command=self.handle_register,
-                   bootstyle=SECONDARY).pack(fill='x', pady=5)
-        ttk.Button(self, text='Powrót do logowania', command=self.go_back_to_login).pack(fill='x', pady=5)
+        ttk.Button(self, text='Zarejestruj się',
+                   bootstyle=SECONDARY,
+                   command=self.handle_register).pack(fill='x', pady=5)
 
-        self.message_label = ttk.Label(self, text='')
+        ttk.Button(self, text='Powrót',
+                   command=lambda: controller.show_frame(LoginForm)).pack(fill='x')
+
+        self.message_label = ttk.Label(self)
         self.message_label.pack(pady=5)
 
     def handle_register(self):
-        first = self.first_name_entry.get().strip().title()
-        last = self.last_name_entry.get().strip().title()
-        email = self.email_entry.get().strip().lower()
-        password = self.password_entry.get().strip()
-        user_data = [first, last, email, password]
-        if not all([first, last, email, password]):
+        data = [
+            self.first_name_entry.get().strip().title(),
+            self.last_name_entry.get().strip().title(),
+            self.email_entry.get().strip().lower(),
+            self.password_entry.get().strip()
+        ]
+
+        if not all(data):
             self.message_label.config(text='Wypełnij wszystkie pola', foreground='red')
             return
-        success, message = self.user_service.register_client(*user_data)
-        if success:
-            self.clear_form()
-            self.message_label.config(text=message, foreground='green')
-        else:
-            self.message_label.config(text=message, foreground='red')
 
-    def go_back_to_login(self):
-        self.clear_form()
-        self.controller.show_frame(LoginForm)
+        ok, msg = self.user_service.register_client(*data)
+        self.message_label.config(text=msg, foreground='green' if ok else 'red')
+        if ok:
+            self.clear_form()
+
+
 
 
 class HomeBaseFrame(ttk.Frame):
@@ -167,104 +159,201 @@ class HomeBaseFrame(ttk.Frame):
         super().__init__(parent)
         self.controller = controller
         self.user_service = user_service
+        self.db = user_service.db
 
-        self.header = ttk.Label(self, text='', font=('Helvetica', 16, 'bold'))
-        self.header.grid(row=0, column=0, sticky='w', pady=20)
+        self.reservation_service = ReservationService(self.db)
+        self.schedule_service = ScheduleService(self.db)
 
-        ttk.Button(self, text='Wyloguj', command=self.logout).grid(
-            row=0, column=1, sticky='e', pady=20
-        )
+        ttk.Label(self, font=('Helvetica', 16, 'bold')).grid(row=0, column=0, sticky='w', pady=20)
+        ttk.Button(self, text='Wyloguj',
+                   command=lambda: controller.show_frame(LoginForm)).grid(row=0, column=1)
 
         self.content = ttk.Frame(self)
-        self.content.grid(row=1, column=0, columnspan=2, sticky='nsew', pady=20)
+        self.content.grid(row=2, column=0, columnspan=2, sticky='nsew')
 
-        self.content.grid_rowconfigure(0, weight=0)
-        self.content.grid_rowconfigure(1, weight=1)
-        self.content.grid_columnconfigure(0, weight=1)
+    def show_content(self, view_cls):
+        for w in self.content.winfo_children():
+            w.destroy()
 
-    def update_user_info(self):
-        user = self.controller.current_user
-        self.header.config(text=f'Witaj, {user.first_name}!')
+        if view_cls is WeeklyScheduleView:
+            view = view_cls(
+                self.content,
+                self.controller,
+                self.user_service,
+                self.schedule_service,
+                self.reservation_service
+            )
+        else:
+            view = view_cls(self.content, self.controller, self.user_service)
 
-    def logout(self):
-        self.controller.current_user = None
-        self.controller.show_frame(LoginForm)
+        view.pack(fill='both', expand=True)
 
-    def show_content(self, frame_class):
-        for widget in self.content.winfo_children():
-            widget.destroy()
 
-        frame = frame_class(self.content, self.controller, self.user_service)
-        frame.pack(fill='both', expand=True)
 
 
 class ClientHome(HomeBaseFrame):
     def __init__(self, parent, controller, user_service):
         super().__init__(parent, controller, user_service)
 
-        self.button_bar = ttk.Frame(self)
-        self.button_bar.grid(row=1, column=0, columnspan=2, pady=10)
+        bar = ttk.Frame(self)
+        bar.grid(row=1, column=0, columnspan=2, pady=10)
 
-        ttk.Button(self.button_bar, text='Moje rezerwacje',
+        ttk.Button(bar, text='Moje rezerwacje',
                    command=lambda: self.show_content(MyReservationsView)).grid(row=0, column=0, padx=5)
 
-        ttk.Button(self.button_bar, text='Harmonogram zajęć',
-                   command=lambda: self.show_content(ScheduleView)).grid(row=0, column=1, padx=5)
+        ttk.Button(bar, text='Harmonogram',
+                   command=lambda: self.show_content(WeeklyScheduleView)).grid(row=0, column=1, padx=5)
 
-        ttk.Button(self.button_bar, text='Edytuj dane',
+        ttk.Button(bar, text='Edytuj dane',
                    command=lambda: self.show_content(EditProfileView)).grid(row=0, column=2, padx=5)
-
-        self.content.grid(row=2, column=0, columnspan=2, sticky='nsew')
 
     def on_show(self):
         self.show_content(MyReservationsView)
 
 
-class ScheduleView:
-    pass
-
 
 class MyReservationsView(ttk.Frame):
     def __init__(self, parent, controller, user_service):
         super().__init__(parent)
-        self.controller = controller
-        self.user_service = user_service
-        self.db = user_service.db
-
-        ttk.Label(self, text='Moje rezerwacje', font=('Helvetica', 12, 'bold')).pack(pady=10)
 
         user = controller.current_user
-        reservations = user.get_reservations(self.db)
+        db = user_service.db
 
-        if not reservations:
-            ttk.Label(self, text='Aktualnie nie masz żadnych rezerwacji.',
-                      font=('Helvetica', 10)).pack(pady=20)
-            return
+        ttk.Label(self, text='Moje rezerwacje',
+                  font=('Helvetica', 12, 'bold')).pack(pady=10)
 
-        columns = ('date', 'type', 'name', 'trainer', 'status')
-        tree = ttk.Treeview(self, columns=columns, show='headings', height=10)
-        tree.pack(fill='both', expand=True)
+        cols = ('date', 'type', 'name', 'trainer', 'status')
+        self.tree = ttk.Treeview(self, columns=cols, show='headings')
+        self.tree.pack(fill='both', expand=True)
 
-        tree.heading('date', text='Data')
-        tree.heading('type', text='Typ')
-        tree.heading('name', text='Nazwa')
-        tree.heading('trainer', text='Trener')
-        tree.heading('status', text='Status')
+        for c in cols:
+            self.tree.heading(c, text=c.capitalize())
 
-        for r in reservations:
-            reservation_id, created_at, status, start_time, type_, name, price, trainer_id = r
-
-            trainer = self.db.get_user_by_id(trainer_id)
+        for r in user.get_reservations(db):
+            dt = datetime.fromisoformat(r[3]).strftime('%d.%m.%Y %H:%M')
+            trainer = db.get_user_by_id(r[7])
             trainer_name = f'{trainer[1]} {trainer[2]}' if trainer else '—'
+            self.tree.insert('', 'end', values=(dt, r[4], r[5], trainer_name, r[2]))
 
-            from datetime import datetime
-            dt = datetime.fromisoformat(start_time)
-            date_str = dt.strftime('%d.%m.%Y %H:%M')
 
-            if type_ == 'pt':
-                name = f'Trening personalny ({price} zł)'
+class WeeklyScheduleView(ttk.Frame):
+    def __init__(self, parent, controller, user_service, schedule_service, reservation_service):
+        super().__init__(parent)
 
-            tree.insert('', 'end', values=(date_str, type_, name, trainer_name, status))
+        self.controller = controller
+        self.schedule_service = schedule_service
+        self.reservation_service = reservation_service
+
+        today = date.today()
+        self.monday = today - timedelta(days=today.weekday())
+
+        ttk.Label(self, text='Grafik tygodniowy',
+                  font=('Helvetica', 12, 'bold')).pack(pady=10)
+
+        self.grid_frame = ttk.Frame(self)
+        self.grid_frame.pack(fill='both', expand=True)
+
+        self.draw_grid()
+
+
+
+    def draw_grid(self):
+        days = ['Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota', 'Niedziela']
+        ttk.Label(self.grid_frame, text='Godzina').grid(row=0, column=0)
+
+        for i, d in enumerate(days):
+            ttk.Label(self.grid_frame, text=d).grid(row=0, column=i + 1)
+
+        week = self.schedule_service.get_week_sessions(self.monday)
+
+        for hour in range(6, 21):
+            ttk.Label(self.grid_frame, text=f'{hour}:00').grid(row=hour - 5, column=0)
+            for day in range(7):
+                cell = ttk.Frame(self.grid_frame, borderwidth=1, relief='solid')
+                cell.grid(row=hour - 5, column=day + 1, sticky='nsew')
+
+                for s in week.get(day, {}).get(hour, []):
+                    ttk.Button(
+                        cell,
+                        text=s['name'],
+                        command=lambda ss=s: self.open_session_details(ss)
+                    ).pack(fill='x')
+
+    def sign_up(self, session):
+        ok, msg = self.reservation_service.create_reservation(
+            self.controller.current_user, session
+        )
+        ttk.Label(self, text=msg,
+                  foreground='green' if ok else 'red').pack(pady=5)
+
+    def unsubscribe(self, session):
+        ok, msg = self.reservation_service.cancel_reservation(
+            self.controller.current_user,
+            session
+        )
+
+        ttk.Label(self, text=msg, foreground='green' if ok else 'red').pack(pady=5)
+
+    def _signup_and_close(self, session, win):
+        self.reservation_service.create_reservation(
+            self.controller.current_user,
+            session
+        )
+        win.destroy()
+
+    def _unsubscribe_and_close(self, session, win):
+        self.reservation_service.cancel_reservation(
+            self.controller.current_user,
+            session
+        )
+        win.destroy()
+
+    def open_session_details(self, session):
+        win = ttk.Toplevel(self)
+        win.title(session['name'])
+        win.geometry('400x320')
+        win.grab_set()
+
+        ttk.Label(
+            win,
+            text=session['name'],
+            font=('Helvetica', 14, 'bold')
+        ).pack(pady=10)
+
+        ttk.Label(win, text=f"Start: {session['start_time']}").pack()
+        ttk.Label(win, text=f"Ilość miejsc: {session['capacity']}").pack()
+
+        available = self.schedule_service.get_available_slots(session['session_id'])
+
+        places_label = ttk.Label(
+            win,
+            text=f"Wolne miejsca: {available}",
+            font=('Helvetica', 11, 'bold')
+        )
+        places_label.pack(pady=10)
+
+        user = self.controller.current_user
+        is_registered = self.reservation_service.is_user_registered(
+            user, session['session_id']
+        )
+
+        if is_registered:
+            ttk.Button(
+                win,
+                text='Wypisz się',
+                bootstyle=DANGER,
+                command=lambda: self._unsubscribe_and_close(session, win)
+            ).pack(pady=10)
+        else:
+            ttk.Button(
+                win,
+                text='Zapisz się',
+                bootstyle=SUCCESS,
+                state=DISABLED if available <= 0 else NORMAL,
+                command=lambda: self._signup_and_close(session, win)
+            ).pack(pady=10)
+
+
 
 
 class EditProfileView(ttk.Frame):
@@ -355,11 +444,10 @@ class TrainerHome(HomeBaseFrame):
         self.content.grid(row=2, column=0, columnspan=2, sticky='nsew')
 
 
+
 class ManagerHome(HomeBaseFrame):
-    def __init__(self, parent, controller, user_service):
-        super().__init__(parent, controller, user_service)
+    pass
 
 
 if __name__ == '__main__':
-    app = App()
-    app.mainloop()
+    App().mainloop()
