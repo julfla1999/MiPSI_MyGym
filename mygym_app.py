@@ -175,7 +175,9 @@ class HomeBaseFrame(ttk.Frame):
         for w in self.content.winfo_children():
             w.destroy()
 
-        if view_cls is WeeklyScheduleView:
+        needs_services = {WeeklyScheduleView, TrainerSessionsView, ManagerSessionsView}
+
+        if view_cls in needs_services:
             view = view_cls(
                 self.content,
                 self.controller,
@@ -187,8 +189,6 @@ class HomeBaseFrame(ttk.Frame):
             view = view_cls(self.content, self.controller, self.user_service)
 
         view.pack(fill='both', expand=True)
-
-
 
 
 class ClientHome(HomeBaseFrame):
@@ -436,17 +436,315 @@ class TrainerHome(HomeBaseFrame):
     def __init__(self, parent, controller, user_service):
         super().__init__(parent, controller, user_service)
 
-        self.button_bar = ttk.Frame(self)
-        self.button_bar.grid(row=1, column=0, columnspan=2, pady=(0, 10))
+        bar = ttk.Frame(self)
+        bar.grid(row=1, column=0, columnspan=2, pady=10)
 
-        ttk.Button(self.button_bar, text='Moje zajęcia').grid(row=0, column=0, padx=10)
+        ttk.Button(
+            bar,
+            text="Moje sesje",
+            command=lambda: self.show_content(TrainerSessionsView)
+        ).grid(row=0, column=0, padx=5)
 
-        self.content.grid(row=2, column=0, columnspan=2, sticky='nsew')
+        ttk.Button(
+            bar,
+            text="Edytuj dane",
+            command=lambda: self.show_content(EditProfileView)
+        ).grid(row=0, column=1, padx=5)
 
-
+    def on_show(self):
+        self.show_content(TrainerSessionsView)
 
 class ManagerHome(HomeBaseFrame):
-    pass
+    def __init__(self, parent, controller, user_service):
+        super().__init__(parent, controller, user_service)
+
+        bar = ttk.Frame(self)
+        bar.grid(row=1, column=0, columnspan=2, pady=10)
+
+        ttk.Button(
+            bar,
+            text="Zarządzaj harmonogramem",
+            command=lambda: self.show_content(ManagerSessionsView)
+        ).grid(row=0, column=0, padx=5)
+
+        ttk.Button(
+            bar,
+            text="Edytuj dane",
+            command=lambda: self.show_content(EditProfileView)
+        ).grid(row=0, column=1, padx=5)
+
+    def on_show(self):
+        self.show_content(ManagerSessionsView)
+
+class TrainerSessionsView(ttk.Frame):
+    def __init__(self, parent, controller, user_service, schedule_service, reservation_service):
+        super().__init__(parent)
+        self.controller = controller
+        self.user_service = user_service
+        self.schedule_service = schedule_service
+        self.reservation_service = reservation_service
+
+        ttk.Label(self, text="Moje sesje (Trener)", font=("Helvetica", 12, "bold")).pack(pady=10)
+
+        cols = ("id", "start", "name", "type", "capacity", "reserved", "available")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
+        for c, h, w in [
+            ("id", "ID", 50),
+            ("start", "Start", 150),
+            ("name", "Nazwa", 140),
+            ("type", "Typ", 70),
+            ("capacity", "Limit", 60),
+            ("reserved", "Zapisani", 70),
+            ("available", "Wolne", 60),
+        ]:
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="center")
+        self.tree.pack(padx=10, pady=5, fill="x")
+
+        ttk.Label(self, text="Uczestnicy wybranej sesji:", font=("Helvetica", 10, "bold")).pack(pady=(10, 5))
+
+        pcols = ("first", "last", "email")
+        self.participants = ttk.Treeview(self, columns=pcols, show="headings", height=6)
+        for c, h, w in [
+            ("first", "Imię", 120),
+            ("last", "Nazwisko", 120),
+            ("email", "Email", 200),
+        ]:
+            self.participants.heading(c, text=h)
+            self.participants.column(c, width=w, anchor="w")
+        self.participants.pack(padx=10, pady=5, fill="x")
+
+        self.msg = ttk.Label(self, text="")
+        self.msg.pack(pady=5)
+
+        self.tree.bind("<<TreeviewSelect>>", self._on_select_session)
+
+        self._reload()
+
+    def _reload(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for i in self.participants.get_children():
+            self.participants.delete(i)
+
+        trainer = self.controller.current_user
+        sessions = self.schedule_service.get_sessions_for_trainer(trainer.user_id)
+
+        for s in sessions:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    s["session_id"],
+                    s["start_time"],
+                    s["name"],
+                    s["type"],
+                    s["capacity"],
+                    s.get("reserved", 0),
+                    s.get("available", 0),
+                ),
+            )
+
+    def _on_select_session(self, _evt):
+        sel = self.tree.selection()
+        if not sel:
+            return
+
+        item = self.tree.item(sel[0])
+        session_id = int(item["values"][0])
+
+        for i in self.participants.get_children():
+            self.participants.delete(i)
+
+        rows = self.reservation_service.get_participants(session_id)
+        for (_uid, first, last, email) in rows:
+            self.participants.insert("", "end", values=(first, last, email))
+
+
+class ManagerSessionsView(ttk.Frame):
+    def __init__(self, parent, controller, user_service, schedule_service, reservation_service):
+        super().__init__(parent)
+        self.controller = controller
+        self.user_service = user_service
+        self.schedule_service = schedule_service
+        self.reservation_service = reservation_service
+        self.db = user_service.db
+
+        ttk.Label(self, text="Harmonogram (Manager)", font=("Helvetica", 12, "bold")).pack(pady=10)
+
+        cols = ("id", "start", "type", "name", "trainer", "capacity", "available")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10)
+        for c, h, w in [
+            ("id", "ID", 50),
+            ("start", "Start", 150),
+            ("type", "Typ", 70),
+            ("name", "Nazwa", 140),
+            ("trainer", "Trener(ID)", 90),
+            ("capacity", "Limit", 60),
+            ("available", "Wolne", 60),
+        ]:
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="center")
+        self.tree.pack(padx=10, pady=5, fill="x")
+
+        btns = ttk.Frame(self)
+        btns.pack(pady=10)
+
+        ttk.Button(btns, text="Dodaj", command=self._open_add).grid(row=0, column=0, padx=5)
+        ttk.Button(btns, text="Edytuj", command=self._open_edit).grid(row=0, column=1, padx=5)
+        ttk.Button(btns, text="Anuluj", command=self._cancel).grid(row=0, column=2, padx=5)
+        ttk.Button(btns, text="Odśwież", command=self._reload).grid(row=0, column=3, padx=5)
+
+        self.msg = ttk.Label(self, text="")
+        self.msg.pack(pady=5)
+
+        self._reload()
+
+    def _reload(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+
+        sessions = self.schedule_service.get_all_sessions()
+        for s in sessions:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    s["session_id"],
+                    s["start_time"],
+                    s["type"],
+                    s["name"],
+                    s["trainer_id"],
+                    s["capacity"],
+                    s.get("available", 0),
+                ),
+            )
+
+    def _selected_session_id(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        item = self.tree.item(sel[0])
+        return int(item["values"][0])
+
+    def _open_add(self):
+        win = ttk.Toplevel(self)
+        win.title("Dodaj sesję")
+        win.geometry("420x420")
+
+        # trenerzy do wyboru
+        trainers = self.db.get_users_by_role("trainer") 
+        trainer_map = {f"{t[0]} - {t[1]} {t[2]}": t[0] for t in trainers}
+
+        form = ttk.Frame(win)
+        form.pack(padx=10, pady=10, fill="x")
+
+        def row(lbl, r):
+            ttk.Label(form, text=lbl).grid(row=r, column=0, sticky="w", pady=4)
+            e = ttk.Entry(form, width=30)
+            e.grid(row=r, column=1, sticky="w")
+            return e
+
+        ttk.Label(form, text="Typ (group/pt)").grid(row=0, column=0, sticky="w", pady=4)
+        type_e = ttk.Entry(form, width=30)
+        type_e.insert(0, "group")
+        type_e.grid(row=0, column=1, sticky="w")
+
+        ttk.Label(form, text="Trener").grid(row=1, column=0, sticky="w", pady=4)
+        trainer_cb = ttk.Combobox(form, values=list(trainer_map.keys()), width=27, state="readonly")
+        if trainer_map:
+            trainer_cb.current(0)
+        trainer_cb.grid(row=1, column=1, sticky="w")
+
+        start_e = row("Start (YYYY-MM-DD HH:MM:SS)", 2)
+        start_e.insert(0, "2026-01-31 10:00:00")
+        dur_e = row("Czas (min)", 3)
+        dur_e.insert(0, "60")
+        cap_e = row("Limit miejsc", 4)
+        cap_e.insert(0, "10")
+        name_e = row("Nazwa", 5)
+        desc_e = row("Opis", 6)
+        diff_e = row("Poziom trudności", 7)
+        price_e = row("Cena (dla pt)", 8)
+
+        msg = ttk.Label(form, text="")
+        msg.grid(row=9, column=0, columnspan=2, pady=10)
+
+        def save():
+            try:
+                trainer_id = trainer_map[trainer_cb.get()]
+            except Exception:
+                msg.config(text="Brak trenera w bazie", foreground="red")
+                return
+
+            ok, info = self.schedule_service.add_session(
+                session_type=type_e.get().strip(),
+                trainer_id=int(trainer_id),
+                start_time=start_e.get().strip(),
+                duration_min=int(dur_e.get().strip()),
+                capacity=int(cap_e.get().strip()),
+                name=name_e.get().strip() or None,
+                description=desc_e.get().strip() or None,
+                difficulty_level=diff_e.get().strip() or None,
+                price=float(price_e.get().strip()) if price_e.get().strip() else None,
+            )
+            msg.config(text=info, foreground=("green" if ok else "red"))
+            if ok:
+                self._reload()
+
+        ttk.Button(form, text="Zapisz", command=save).grid(row=10, column=0, columnspan=2, pady=10)
+
+    def _open_edit(self):
+        session_id = self._selected_session_id()
+        if session_id is None:
+            self.msg.config(text="Wybierz sesję do edycji", foreground="red")
+            return
+
+        win = ttk.Toplevel(self)
+        win.title(f"Edytuj sesję {session_id}")
+        win.geometry("420x320")
+
+        form = ttk.Frame(win)
+        form.pack(padx=10, pady=10, fill="x")
+
+        def row(lbl, r):
+            ttk.Label(form, text=lbl).grid(row=r, column=0, sticky="w", pady=4)
+            e = ttk.Entry(form, width=30)
+            e.grid(row=r, column=1, sticky="w")
+            return e
+
+        name_e = row("Nazwa", 0)
+        start_e = row("Start (YYYY-MM-DD HH:MM:SS)", 1)
+        dur_e = row("Czas (min)", 2)
+        cap_e = row("Limit miejsc", 3)
+
+        msg = ttk.Label(form, text="")
+        msg.grid(row=4, column=0, columnspan=2, pady=10)
+
+        def save():
+            ok, info = self.schedule_service.edit_session(
+                session_id,
+                name=name_e.get().strip() or None,
+                start_time=start_e.get().strip() or None,
+                duration_min=dur_e.get().strip() or None,
+                capacity=cap_e.get().strip() or None,
+            )
+            msg.config(text=info, foreground=("green" if ok else "red"))
+            if ok:
+                self._reload()
+
+        ttk.Button(form, text="Zapisz zmiany", command=save).grid(row=5, column=0, columnspan=2, pady=10)
+
+    def _cancel(self):
+        session_id = self._selected_session_id()
+        if session_id is None:
+            self.msg.config(text="Wybierz sesję do anulowania", foreground="red")
+            return
+
+        ok, info = self.schedule_service.remove_session(session_id)
+        self.msg.config(text=info, foreground=("green" if ok else "red"))
+        self._reload()
+
 
 
 if __name__ == '__main__':
