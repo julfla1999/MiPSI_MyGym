@@ -349,7 +349,7 @@ class WeeklyScheduleView(ttk.Frame):
                 win,
                 text='Zapisz się',
                 bootstyle=SUCCESS,
-                state=DISABLED if available <= 0 else NORMAL,
+                state=NORMAL,
                 command=lambda: self._signup_and_close(session, win)
             ).pack(pady=10)
 

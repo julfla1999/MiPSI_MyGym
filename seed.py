@@ -9,7 +9,7 @@ def seed_users():
 
     initial_users = [
         ('Marian', 'Kowalski', 'marian@mygym', hash_password('manager123'), 'manager'),
-        ('Tomasz', 'Tomasz', 'tomasz@mygym', hash_password('trainer123'), 'trainer'),
+        ('Tomasz', 'Wrona', 'tomasz@mygym', hash_password('trainer123'), 'trainer'),
         ('Kasia', 'Nowak', 'kasia@mygym', hash_password('trainer123'), 'trainer'),
     ]
 

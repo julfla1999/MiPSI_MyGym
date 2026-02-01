@@ -267,7 +267,7 @@ class ScheduleService:
 
 
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 
 class ReservationService:
@@ -277,10 +277,23 @@ class ReservationService:
 
     @staticmethod
     def _extract_session_fields(session: Any) -> Tuple[Optional[int], Optional[int]]:
+       
+        session_id = None
+        capacity = None
 
+        
         if isinstance(session, dict):
             session_id = session.get("session_id")
             capacity = session.get("capacity")
+
+
+        elif isinstance(session, (tuple, list)):
+            if len(session) > 0:
+                session_id = session[0]
+            if len(session) > 9:
+                capacity = session[9]
+
+        # 3) obiekt
         else:
             session_id = getattr(session, "session_id", None)
             capacity = getattr(session, "capacity", None)
@@ -299,14 +312,25 @@ class ReservationService:
 
     @staticmethod
     def _extract_client_id(client: Any) -> Optional[int]:
-
         cid = getattr(client, "user_id", None)
         if cid is None:
             cid = getattr(client, "id", None)
+
         try:
             return int(cid) if cid is not None else None
         except Exception:
             return None
+
+    def is_user_registered(self, client: Any, session_id: Any) -> bool:
+        client_id = self._extract_client_id(client)
+        if client_id is None:
+            return False
+        try:
+            session_id = int(session_id)
+        except Exception:
+            return False
+
+        return self.db.client_has_reservation(client_id, session_id)
 
     def create_reservation(self, client: Any, session: Any) -> Tuple[bool, str]:
         client_id = self._extract_client_id(client)
@@ -348,7 +372,7 @@ class ReservationService:
         self.db.update_reservation_status(reservation_id, "CANCELLED")
         return True, "Rezerwacja anulowana"
 
-    def cancel_reservation_by_id(self, reservation_id: int) -> Tuple[bool, str]:
+    def cancel_reservation_by_id(self, reservation_id: Any) -> Tuple[bool, str]:
         try:
             reservation_id = int(reservation_id)
         except Exception:
@@ -361,11 +385,13 @@ class ReservationService:
         self.db.update_reservation_status(reservation_id, "CANCELLED")
         return True, "Rezerwacja anulowana"
 
-    def get_participants(self, session_id: int):
-        
+    def get_participants(self, session_id: Any):
         try:
             session_id = int(session_id)
         except Exception:
             return []
         return self.db.get_session_participants(session_id)
+
+
+
 
